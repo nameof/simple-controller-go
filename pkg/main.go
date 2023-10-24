@@ -1,22 +1,24 @@
 package main
 
 import (
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"log"
+	"time"
 )
 
 func main() {
 	config, err := clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
 	if err != nil {
 		log.Println("fallback to InClusterConfig")
-		inClusterConfig, err := rest.InClusterConfig()
+		config, err = rest.InClusterConfig()
 		if err != nil {
 			log.Println("cannot get config")
 			panic(err)
 		}
-		config = inClusterConfig
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
@@ -25,6 +27,9 @@ func main() {
 		panic(err)
 	}
 
-	controller := NewSimpleController(clientset)
+	factory := informers.NewSharedInformerFactory(clientset, 0)
+	controller := NewSimpleController(clientset, factory)
 	controller.Run()
+
+	wait.Until(func() {}, time.Second, wait.NeverStop)
 }
