@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreLister "k8s.io/client-go/listers/core/v1"
@@ -11,7 +14,8 @@ import (
 )
 
 const (
-	exposeIngressKey = "simple-controller.nameof.github.com/exposeIngress"
+	exposeIngressKey    = "simple-controller.nameof.github.com/exposeIngress"
+	ownerServiceNameKey = "simple-controller.nameof.github.com/ownerServiceName"
 )
 
 type SimpleController struct {
@@ -34,7 +38,7 @@ func NewSimpleController(client *kubernetes.Clientset, factory informers.SharedI
 	serviceInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.ServiceAdd,
 		UpdateFunc: c.ServiceUpdate,
-		DeleteFunc: ServiceDelete,
+		DeleteFunc: c.ServiceDelete,
 	})
 
 	ingressInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -95,8 +99,26 @@ func (c *SimpleController) syncIngerss(namespace string, name string) {
 	// TODO
 }
 
-func ServiceDelete(obj interface{}) {
-	log.Printf("ServiceDelete：%s\n", obj)
+func (c *SimpleController) ServiceDelete(obj interface{}) {
+	key, _ := cache.MetaNamespaceKeyFunc(obj)
+	log.Printf("ServiceDelete：%s\n", key)
+	namespace, name, _ := cache.SplitMetaNamespaceKey(key)
+	ingresses, err := c.ingressLister.Ingresses(namespace).List(labels.Everything())
+	if err != nil {
+		log.Printf("error List All Ingress %s\n", err)
+		return
+	}
+	for _, ingress := range ingresses {
+		value, ok := ingress.GetAnnotations()[ownerServiceNameKey]
+		if ok && value == name {
+			log.Printf("delete ingress %s\n", ingress.GetName())
+			err = c.client.NetworkingV1().Ingresses(namespace).Delete(context.TODO(), ingress.GetName(), metav1.DeleteOptions{})
+			if err != nil {
+				log.Printf("error delete ingress %s %s\n", ingress.GetName(), err)
+				continue
+			}
+		}
+	}
 }
 
 func IngressDelete(obj interface{}) {
