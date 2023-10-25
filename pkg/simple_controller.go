@@ -66,17 +66,10 @@ func (c *SimpleController) ServiceUpdate(old interface{}, updated interface{}) {
 }
 
 func (c *SimpleController) ServiceAddOrUpdate(obj interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(obj)
-	if err != nil {
-		panic(err)
-	}
+	key, _ := cache.MetaNamespaceKeyFunc(obj)
 	log.Printf("ServiceAdd/ServiceUpdate：%s\n", key)
 
-	namespace, name, err := cache.SplitMetaNamespaceKey(key)
-	if err != nil {
-		panic(err)
-	}
-
+	namespace, name, _ := cache.SplitMetaNamespaceKey(key)
 	service, err := c.serviceLister.Services(namespace).Get(name)
 	if err != nil {
 		if errors.IsNotFound(err) {
