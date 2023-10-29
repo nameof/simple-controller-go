@@ -59,16 +59,16 @@ func (c *SimpleController) Run() {
 }
 
 func (c *SimpleController) ServiceAdd(obj interface{}) {
-	c.ServiceAddOrUpdate(obj)
+	c.serviceAddOrUpdate(obj)
 }
 
 func (c *SimpleController) ServiceUpdate(old interface{}, updated interface{}) {
-	c.ServiceAddOrUpdate(updated)
+	c.serviceAddOrUpdate(updated)
 }
 
-func (c *SimpleController) ServiceAddOrUpdate(obj interface{}) {
+func (c *SimpleController) serviceAddOrUpdate(obj interface{}) {
 	key, _ := cache.MetaNamespaceKeyFunc(obj)
-	log.Printf("ServiceAdd/ServiceUpdate：%s\n", key)
+	log.Printf("service add/update：%s\n", key)
 
 	namespace, name, _ := cache.SplitMetaNamespaceKey(key)
 	service, err := c.serviceLister.Services(namespace).Get(name)
@@ -93,14 +93,62 @@ func (c *SimpleController) syncIngerss(namespace string, name string) {
 	log.Printf("check and create/update ingress")
 	ingress := c.getIngressByService(namespace, name)
 	if ingress != nil {
+		log.Printf("ingress %s/%s already exists\n", ingress.GetNamespace(), ingress.GetName())
 		return
 	}
 
 	// TODO创建Ingress
+	ingressClass := "nginx"
+	pathTypePrefix := v1.PathTypePrefix
+	ingress = &v1.Ingress{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Ingress",
+			APIVersion: "networking.k8s.io/v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name + "-ingress",
+			Namespace: namespace,
+			Annotations: map[string]string{
+				ownerServiceNameKey: name,
+			},
+		},
+		Spec: v1.IngressSpec{
+			IngressClassName: &ingressClass,
+			Rules: []v1.IngressRule{
+				{
+					Host: "simple-controller.nameof.com",
+					IngressRuleValue: v1.IngressRuleValue{
+						HTTP: &v1.HTTPIngressRuleValue{
+							Paths: []v1.HTTPIngressPath{
+								{
+									Path:     "/",
+									PathType: &pathTypePrefix,
+									Backend: v1.IngressBackend{
+										Service: &v1.IngressServiceBackend{
+											Name: "http",
+											Port: v1.ServiceBackendPort{
+												Number: 80,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := c.client.NetworkingV1().Ingresses(namespace).Create(context.Background(), ingress, metav1.CreateOptions{})
+	if err != nil {
+		log.Printf("error create ingress: %s\n", err)
+		return
+	}
+	log.Printf("ingress %s/%s created\n", ingress.GetNamespace(), ingress.GetName())
 }
 
 func (c *SimpleController) deleteIngerss(namespace string, name string) {
-	log.Printf("check and create/update ingress")
+	log.Printf("delete ingress")
 	ingress := c.getIngressByService(namespace, name)
 	if ingress != nil {
 		log.Printf("delete ingress %s\n", ingress.GetName())
@@ -113,7 +161,7 @@ func (c *SimpleController) deleteIngerss(namespace string, name string) {
 
 func (c *SimpleController) ServiceDelete(obj interface{}) {
 	key, _ := cache.MetaNamespaceKeyFunc(obj)
-	log.Printf("ServiceDelete：%s\n", key)
+	log.Printf("service delete：%s\n", key)
 	namespace, name, _ := cache.SplitMetaNamespaceKey(key)
 	c.deleteIngerss(namespace, name)
 }
@@ -121,7 +169,7 @@ func (c *SimpleController) ServiceDelete(obj interface{}) {
 func (c *SimpleController) getIngressByService(namespace string, name string) *v1.Ingress {
 	ingresses, err := c.ingressLister.Ingresses(namespace).List(labels.Everything())
 	if err != nil {
-		log.Printf("error List All Ingress %s\n", err)
+		log.Printf("error list all ingress %s\n", err)
 		return nil
 	}
 
