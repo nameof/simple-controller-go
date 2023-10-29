@@ -86,7 +86,6 @@ func (c *SimpleController) serviceAddOrUpdate(obj interface{}) {
 	} else {
 		c.deleteIngerss(namespace, name)
 	}
-	log.Printf("ignore service: %s\n", key)
 }
 
 func (c *SimpleController) syncIngerss(namespace string, name string) {
