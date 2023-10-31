@@ -39,12 +39,11 @@ func NewSimpleController(client *kubernetes.Clientset, factory informers.SharedI
 	serviceInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.ServiceAdd,
 		UpdateFunc: c.ServiceUpdate,
-		DeleteFunc: c.ServiceDelete,
+		DeleteFunc: c.ServiceDeleted,
 	})
 
 	ingressInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		// TODO 处理Ingress更新事件
-		DeleteFunc: IngressDelete,
+		DeleteFunc: c.IngressDeleted,
 	})
 	return c
 }
@@ -95,20 +94,22 @@ func (c *SimpleController) syncIngerss(namespace string, name string) {
 		log.Printf("ingress %s/%s already exists\n", ingress.GetNamespace(), ingress.GetName())
 		return
 	}
+	c.createIngress(namespace, name)
+}
 
-	// TODO创建Ingress
+func (c *SimpleController) createIngress(namespace string, serviceName string) {
 	ingressClass := "nginx"
 	pathTypePrefix := v1.PathTypePrefix
-	ingress = &v1.Ingress{
+	ingress := &v1.Ingress{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Ingress",
 			APIVersion: "networking.k8s.io/v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name + "-ingress",
+			Name:      serviceName + "-ingress",
 			Namespace: namespace,
 			Annotations: map[string]string{
-				ownerServiceNameKey: name,
+				ownerServiceNameKey: serviceName,
 			},
 		},
 		Spec: v1.IngressSpec{
@@ -158,7 +159,7 @@ func (c *SimpleController) deleteIngerss(namespace string, name string) {
 	}
 }
 
-func (c *SimpleController) ServiceDelete(obj interface{}) {
+func (c *SimpleController) ServiceDeleted(obj interface{}) {
 	key, _ := cache.MetaNamespaceKeyFunc(obj)
 	log.Printf("service delete：%s\n", key)
 	namespace, name, _ := cache.SplitMetaNamespaceKey(key)
@@ -181,7 +182,30 @@ func (c *SimpleController) getIngressByService(namespace string, name string) *v
 	return nil
 }
 
-func IngressDelete(obj interface{}) {
-	// 检查是否需要恢复Ingress
-	log.Printf("IngressDelete：%s\n", obj)
+// IngressDeleted 检查是否需要恢复Ingress
+func (c *SimpleController) IngressDeleted(obj interface{}) {
+	key, _ := cache.MetaNamespaceKeyFunc(obj)
+	log.Printf("ingress delete：%s\n", key)
+
+	namespace, _, _ := cache.SplitMetaNamespaceKey(key)
+	ingress := obj.(*v1.Ingress)
+	serviceName, ok := ingress.GetAnnotations()[ownerServiceNameKey]
+	// 非本controller管理
+	if !ok {
+		log.Printf("ignore deleted ingress：%s\n", key)
+		return
+	}
+
+	service, err := c.serviceLister.Services(namespace).Get(serviceName)
+	if err != nil {
+		log.Printf("error get service：%s\n", err)
+		return
+	}
+	value, ok := service.GetAnnotations()[exposeIngressKey]
+	if ok && "true" == value {
+		log.Printf("recovrey ingress：%s\n", key)
+		c.createIngress(namespace, serviceName)
+	} else {
+		log.Printf("service not enable ingress：%s\n", key)
+	}
 }
