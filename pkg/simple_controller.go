@@ -2,14 +2,14 @@ package main
 
 import (
 	"context"
-	v1 "k8s.io/api/networking/v1"
+	apiNetworkV1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreLister "k8s.io/client-go/listers/core/v1"
-	networkingV1 "k8s.io/client-go/listers/networking/v1"
+	networkingLister "k8s.io/client-go/listers/networking/v1"
 	"k8s.io/client-go/tools/cache"
 	"log"
 )
@@ -22,7 +22,7 @@ const (
 type SimpleController struct {
 	client        *kubernetes.Clientset
 	factory       informers.SharedInformerFactory
-	ingressLister networkingV1.IngressLister
+	ingressLister networkingLister.IngressLister
 	serviceLister coreLister.ServiceLister
 }
 
@@ -99,8 +99,8 @@ func (c *SimpleController) syncIngerss(namespace string, name string) {
 
 func (c *SimpleController) createIngress(namespace string, serviceName string) {
 	ingressClass := "nginx"
-	pathTypePrefix := v1.PathTypePrefix
-	ingress := &v1.Ingress{
+	pathTypePrefix := apiNetworkV1.PathTypePrefix
+	ingress := &apiNetworkV1.Ingress{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Ingress",
 			APIVersion: "networking.k8s.io/v1",
@@ -112,21 +112,21 @@ func (c *SimpleController) createIngress(namespace string, serviceName string) {
 				ownerServiceNameKey: serviceName,
 			},
 		},
-		Spec: v1.IngressSpec{
+		Spec: apiNetworkV1.IngressSpec{
 			IngressClassName: &ingressClass,
-			Rules: []v1.IngressRule{
+			Rules: []apiNetworkV1.IngressRule{
 				{
 					Host: "simple-controller.nameof.com",
-					IngressRuleValue: v1.IngressRuleValue{
-						HTTP: &v1.HTTPIngressRuleValue{
-							Paths: []v1.HTTPIngressPath{
+					IngressRuleValue: apiNetworkV1.IngressRuleValue{
+						HTTP: &apiNetworkV1.HTTPIngressRuleValue{
+							Paths: []apiNetworkV1.HTTPIngressPath{
 								{
 									Path:     "/",
 									PathType: &pathTypePrefix,
-									Backend: v1.IngressBackend{
-										Service: &v1.IngressServiceBackend{
+									Backend: apiNetworkV1.IngressBackend{
+										Service: &apiNetworkV1.IngressServiceBackend{
 											Name: "http",
-											Port: v1.ServiceBackendPort{
+											Port: apiNetworkV1.ServiceBackendPort{
 												Number: 80,
 											},
 										},
@@ -147,9 +147,9 @@ func (c *SimpleController) createIngress(namespace string, serviceName string) {
 	log.Printf("ingress %s/%s created\n", ingress.GetNamespace(), ingress.GetName())
 }
 
-func (c *SimpleController) deleteIngerss(namespace string, name string) {
+func (c *SimpleController) deleteIngerss(namespace string, serviceName string) {
 	log.Printf("delete ingress")
-	ingress := c.getIngressByService(namespace, name)
+	ingress := c.getIngressByService(namespace, serviceName)
 	if ingress != nil {
 		log.Printf("delete ingress %s\n", ingress.GetName())
 		err := c.client.NetworkingV1().Ingresses(namespace).Delete(context.TODO(), ingress.GetName(), metav1.DeleteOptions{})
@@ -166,7 +166,7 @@ func (c *SimpleController) ServiceDeleted(obj interface{}) {
 	c.deleteIngerss(namespace, name)
 }
 
-func (c *SimpleController) getIngressByService(namespace string, name string) *v1.Ingress {
+func (c *SimpleController) getIngressByService(namespace string, name string) *apiNetworkV1.Ingress {
 	ingresses, err := c.ingressLister.Ingresses(namespace).List(labels.Everything())
 	if err != nil {
 		log.Printf("error list all ingress %s\n", err)
@@ -188,7 +188,7 @@ func (c *SimpleController) IngressDeleted(obj interface{}) {
 	log.Printf("ingress delete：%s\n", key)
 
 	namespace, _, _ := cache.SplitMetaNamespaceKey(key)
-	ingress := obj.(*v1.Ingress)
+	ingress := obj.(*apiNetworkV1.Ingress)
 	serviceName, ok := ingress.GetAnnotations()[ownerServiceNameKey]
 	// 非本controller管理
 	if !ok {
