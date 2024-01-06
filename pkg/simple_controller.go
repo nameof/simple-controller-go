@@ -1,4 +1,4 @@
-package main
+package controller
 
 import (
 	"context"
@@ -125,7 +125,7 @@ func (c *SimpleController) createIngress(namespace string, serviceName string) {
 									PathType: &pathTypePrefix,
 									Backend: apiNetworkV1.IngressBackend{
 										Service: &apiNetworkV1.IngressServiceBackend{
-											Name: "http",
+											Name: serviceName,
 											Port: apiNetworkV1.ServiceBackendPort{
 												Number: 80,
 											},
