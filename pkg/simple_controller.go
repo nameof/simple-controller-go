@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	corev1 "k8s.io/api/core/v1"
 	apiNetworkV1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,23 +82,23 @@ func (c *SimpleController) serviceAddOrUpdate(obj interface{}) {
 
 	value, ok := service.GetAnnotations()[exposeIngressKey]
 	if ok && "true" == value {
-		c.syncIngerss(namespace, name)
+		c.syncIngerss(service)
 	} else {
 		c.deleteIngerss(namespace, name)
 	}
 }
 
-func (c *SimpleController) syncIngerss(namespace string, name string) {
+func (c *SimpleController) syncIngerss(service *corev1.Service) {
 	log.Printf("check and create/update ingress")
-	ingress := c.getIngressByService(namespace, name)
+	ingress := c.getIngressByService(service.GetNamespace(), service.GetName())
 	if ingress != nil {
 		log.Printf("ingress %s/%s already exists\n", ingress.GetNamespace(), ingress.GetName())
 		return
 	}
-	c.createIngress(namespace, name)
+	c.createIngress(service)
 }
 
-func (c *SimpleController) createIngress(namespace string, serviceName string) {
+func (c *SimpleController) createIngress(service *corev1.Service) {
 	ingressClass := "nginx"
 	pathTypePrefix := apiNetworkV1.PathTypePrefix
 	ingress := &apiNetworkV1.Ingress{
@@ -106,10 +107,10 @@ func (c *SimpleController) createIngress(namespace string, serviceName string) {
 			APIVersion: "networking.k8s.io/v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      serviceName + "-ingress",
-			Namespace: namespace,
+			Name:      service.GetName() + "-ingress",
+			Namespace: service.GetNamespace(),
 			Annotations: map[string]string{
-				ownerServiceNameKey: serviceName,
+				ownerServiceNameKey: service.GetName(),
 			},
 		},
 		Spec: apiNetworkV1.IngressSpec{
@@ -125,7 +126,7 @@ func (c *SimpleController) createIngress(namespace string, serviceName string) {
 									PathType: &pathTypePrefix,
 									Backend: apiNetworkV1.IngressBackend{
 										Service: &apiNetworkV1.IngressServiceBackend{
-											Name: serviceName,
+											Name: service.GetName(),
 											Port: apiNetworkV1.ServiceBackendPort{
 												Number: 80,
 											},
@@ -139,7 +140,10 @@ func (c *SimpleController) createIngress(namespace string, serviceName string) {
 			},
 		},
 	}
-	_, err := c.client.NetworkingV1().Ingresses(namespace).Create(context.Background(), ingress, metav1.CreateOptions{})
+	ingress.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
+		*metav1.NewControllerRef(service, corev1.SchemeGroupVersion.WithKind("Service")),
+	}
+	_, err := c.client.NetworkingV1().Ingresses(service.GetNamespace()).Create(context.Background(), ingress, metav1.CreateOptions{})
 	if err != nil {
 		log.Printf("error create ingress: %s\n", err)
 		return
@@ -162,8 +166,7 @@ func (c *SimpleController) deleteIngerss(namespace string, serviceName string) {
 func (c *SimpleController) ServiceDeleted(obj interface{}) {
 	key, _ := cache.MetaNamespaceKeyFunc(obj)
 	log.Printf("service delete：%s\n", key)
-	namespace, name, _ := cache.SplitMetaNamespaceKey(key)
-	c.deleteIngerss(namespace, name)
+	// 无需手动删除ingress，k8s ownerReferences自动级联删除
 }
 
 func (c *SimpleController) getIngressByService(namespace string, name string) *apiNetworkV1.Ingress {
@@ -204,7 +207,7 @@ func (c *SimpleController) IngressDeleted(obj interface{}) {
 	value, ok := service.GetAnnotations()[exposeIngressKey]
 	if ok && "true" == value {
 		log.Printf("recovrey ingress：%s\n", key)
-		c.createIngress(namespace, serviceName)
+		c.createIngress(service)
 	} else {
 		log.Printf("service not enable ingress：%s\n", key)
 	}
