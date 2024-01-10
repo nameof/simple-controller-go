@@ -6,7 +6,6 @@ import (
 	apiNetworkV1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreLister "k8s.io/client-go/listers/core/v1"
@@ -16,8 +15,7 @@ import (
 )
 
 const (
-	exposeIngressKey    = "simple-controller.nameof.github.com/exposeIngress"
-	ownerServiceNameKey = "simple-controller.nameof.github.com/ownerServiceName"
+	exposeIngressKey = "simple-controller.nameof.github.com/exposeIngress"
 )
 
 type SimpleController struct {
@@ -84,13 +82,13 @@ func (c *SimpleController) serviceAddOrUpdate(obj interface{}) {
 	if ok && "true" == value {
 		c.syncIngerss(service)
 	} else {
-		c.deleteIngerss(namespace, name)
+		c.deleteIngerss(service)
 	}
 }
 
 func (c *SimpleController) syncIngerss(service *corev1.Service) {
 	log.Printf("check and create/update ingress")
-	ingress := c.getIngressByService(service.GetNamespace(), service.GetName())
+	ingress := c.getIngressByService(service)
 	if ingress != nil {
 		log.Printf("ingress %s/%s already exists\n", ingress.GetNamespace(), ingress.GetName())
 		return
@@ -107,11 +105,8 @@ func (c *SimpleController) createIngress(service *corev1.Service) {
 			APIVersion: "networking.k8s.io/v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      service.GetName() + "-ingress",
+			Name:      c.getIngressNameByServiceName(service.GetName()),
 			Namespace: service.GetNamespace(),
-			Annotations: map[string]string{
-				ownerServiceNameKey: service.GetName(),
-			},
 		},
 		Spec: apiNetworkV1.IngressSpec{
 			IngressClassName: &ingressClass,
@@ -151,12 +146,12 @@ func (c *SimpleController) createIngress(service *corev1.Service) {
 	log.Printf("ingress %s/%s created\n", ingress.GetNamespace(), ingress.GetName())
 }
 
-func (c *SimpleController) deleteIngerss(namespace string, serviceName string) {
+func (c *SimpleController) deleteIngerss(service *corev1.Service) {
 	log.Printf("delete ingress")
-	ingress := c.getIngressByService(namespace, serviceName)
+	ingress := c.getIngressByService(service)
 	if ingress != nil {
 		log.Printf("delete ingress %s\n", ingress.GetName())
-		err := c.client.NetworkingV1().Ingresses(namespace).Delete(context.TODO(), ingress.GetName(), metav1.DeleteOptions{})
+		err := c.client.NetworkingV1().Ingresses(service.GetNamespace()).Delete(context.TODO(), ingress.GetName(), metav1.DeleteOptions{})
 		if err != nil {
 			log.Printf("error delete ingress %s %s\n", ingress.GetName(), err)
 		}
@@ -169,20 +164,28 @@ func (c *SimpleController) ServiceDeleted(obj interface{}) {
 	// 无需手动删除ingress，k8s ownerReferences自动级联删除
 }
 
-func (c *SimpleController) getIngressByService(namespace string, name string) *apiNetworkV1.Ingress {
-	ingresses, err := c.ingressLister.Ingresses(namespace).List(labels.Everything())
+func (c *SimpleController) getIngressByService(service *corev1.Service) *apiNetworkV1.Ingress {
+	ingress, err := c.ingressLister.Ingresses(service.GetNamespace()).Get(c.getIngressNameByServiceName(service.GetName()))
 	if err != nil {
-		log.Printf("error list all ingress %s\n", err)
+		log.Printf("%s\n", err)
 		return nil
 	}
+	return ingress
+}
 
-	for _, ingress := range ingresses {
-		value, ok := ingress.GetAnnotations()[ownerServiceNameKey]
-		if ok && value == name {
-			return ingress
-		}
+func (c *SimpleController) getServiceNameByIngress(ingress *apiNetworkV1.Ingress) *string {
+	ownerReference := metav1.GetControllerOf(ingress)
+	if ownerReference == nil {
+		return nil
 	}
-	return nil
+	if ownerReference.Kind != "Service" {
+		return nil
+	}
+	return &ownerReference.Name
+}
+
+func (c *SimpleController) getIngressNameByServiceName(name string) string {
+	return name + "-ingress"
 }
 
 // IngressDeleted 检查是否需要恢复Ingress
@@ -192,14 +195,15 @@ func (c *SimpleController) IngressDeleted(obj interface{}) {
 
 	namespace, _, _ := cache.SplitMetaNamespaceKey(key)
 	ingress := obj.(*apiNetworkV1.Ingress)
-	serviceName, ok := ingress.GetAnnotations()[ownerServiceNameKey]
+
+	serviceName := c.getServiceNameByIngress(ingress)
 	// 非本controller管理
-	if !ok {
+	if serviceName == nil {
 		log.Printf("ignore deleted ingress：%s\n", key)
 		return
 	}
 
-	service, err := c.serviceLister.Services(namespace).Get(serviceName)
+	service, err := c.serviceLister.Services(namespace).Get(*serviceName)
 	if err != nil {
 		log.Printf("error get service：%s\n", err)
 		return
