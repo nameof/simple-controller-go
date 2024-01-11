@@ -208,11 +208,5 @@ func (c *SimpleController) IngressDeleted(obj interface{}) {
 		log.Printf("error get service：%s\n", err)
 		return
 	}
-	value, ok := service.GetAnnotations()[exposeIngressKey]
-	if ok && "true" == value {
-		log.Printf("recovrey ingress：%s\n", key)
-		c.createIngress(service)
-	} else {
-		log.Printf("service not enable ingress：%s\n", key)
-	}
+	c.syncIngerss(service)
 }
