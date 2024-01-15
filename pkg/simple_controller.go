@@ -6,12 +6,15 @@ import (
 	apiNetworkV1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreLister "k8s.io/client-go/listers/core/v1"
 	networkingLister "k8s.io/client-go/listers/networking/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	"log"
+	"time"
 )
 
 const (
@@ -23,6 +26,7 @@ type SimpleController struct {
 	factory       informers.SharedInformerFactory
 	ingressLister networkingLister.IngressLister
 	serviceLister coreLister.ServiceLister
+	queue         workqueue.Interface
 }
 
 func NewSimpleController(client *kubernetes.Clientset, factory informers.SharedInformerFactory) *SimpleController {
@@ -33,6 +37,7 @@ func NewSimpleController(client *kubernetes.Clientset, factory informers.SharedI
 		factory:       factory,
 		ingressLister: ingressInformer.Lister(),
 		serviceLister: serviceInformer.Lister(),
+		queue:         workqueue.New(),
 	}
 
 	serviceInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -53,19 +58,34 @@ func (c *SimpleController) Run() {
 	c.factory.Start(stopChan)
 	c.factory.WaitForCacheSync(stopChan)
 
+	wait.Until(c.doWork, time.Second, stopChan)
 	log.Println("controller started!")
 }
 
 func (c *SimpleController) ServiceAdd(obj interface{}) {
-	c.serviceAddOrUpdate(obj)
+	key, _ := cache.MetaNamespaceKeyFunc(obj)
+	c.queue.Add(key)
 }
 
 func (c *SimpleController) ServiceUpdate(old interface{}, updated interface{}) {
-	c.serviceAddOrUpdate(updated)
+	key, _ := cache.MetaNamespaceKeyFunc(updated)
+	c.queue.Add(key)
 }
 
-func (c *SimpleController) serviceAddOrUpdate(obj interface{}) {
-	key, _ := cache.MetaNamespaceKeyFunc(obj)
+func (c *SimpleController) doWork() {
+	for c.process() {
+
+	}
+}
+
+func (c *SimpleController) process() bool {
+	item, shutdown := c.queue.Get()
+	if shutdown {
+		return false
+	}
+	defer c.queue.Done(item)
+
+	key := item.(string)
 	log.Printf("service add/update：%s\n", key)
 
 	namespace, name, _ := cache.SplitMetaNamespaceKey(key)
@@ -73,9 +93,8 @@ func (c *SimpleController) serviceAddOrUpdate(obj interface{}) {
 	if err != nil {
 		if errors.IsNotFound(err) {
 			log.Println("service not exists, skip...")
-			return
 		}
-		return
+		return true
 	}
 
 	value, ok := service.GetAnnotations()[exposeIngressKey]
@@ -84,6 +103,7 @@ func (c *SimpleController) serviceAddOrUpdate(obj interface{}) {
 	} else {
 		c.deleteIngerss(service)
 	}
+	return true
 }
 
 func (c *SimpleController) syncIngerss(service *corev1.Service) {
@@ -203,10 +223,5 @@ func (c *SimpleController) IngressDeleted(obj interface{}) {
 		return
 	}
 
-	service, err := c.serviceLister.Services(namespace).Get(*serviceName)
-	if err != nil {
-		log.Printf("error get service：%s\n", err)
-		return
-	}
-	c.syncIngerss(service)
+	c.queue.Add(namespace + "/" + *serviceName)
 }
