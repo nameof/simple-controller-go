@@ -19,6 +19,7 @@ import (
 
 const (
 	exposeIngressKey = "simple-controller.nameof.github.com/exposeIngress"
+	workNum          = 5
 )
 
 type SimpleController struct {
@@ -52,13 +53,13 @@ func NewSimpleController(client *kubernetes.Clientset, factory informers.SharedI
 	return c
 }
 
-func (c *SimpleController) Run() {
-	stopChan := make(chan struct{})
-
+func (c *SimpleController) Run(stopChan <-chan struct{}) {
 	c.factory.Start(stopChan)
 	c.factory.WaitForCacheSync(stopChan)
 
-	wait.Until(c.doWork, time.Second, stopChan)
+	for i := 0; i < workNum; i++ {
+		go wait.Until(c.doWork, time.Second, stopChan)
+	}
 	log.Println("controller started!")
 }
 

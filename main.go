@@ -2,13 +2,11 @@ package main
 
 import (
 	controller "github.com/nameof/simple-controller-go/pkg"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"log"
-	"time"
 )
 
 func main() {
@@ -30,7 +28,8 @@ func main() {
 
 	factory := informers.NewSharedInformerFactory(clientset, 0)
 	controller := controller.NewSimpleController(clientset, factory)
-	controller.Run()
 
-	wait.Until(func() {}, time.Second, wait.NeverStop)
+	var stopChan <-chan struct{} = nil
+	controller.Run(stopChan)
+	<-stopChan
 }
